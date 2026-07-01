@@ -225,6 +225,7 @@ const materialPlans = {
 const materialTypeOptions = ["強攻", "撃破", "異常", "支援", "防護", "命破"];
 const skillTypeOptions = ["物理", "炎", "氷", "電気", "エーテル"];
 const weeklyBossOptions = ["未設定", "要警戒・新週ボス", "既存週ボス", "Ver3.0追加素材待ち"];
+const quickTagOptions = ["厳選中", "危局用", "式輿用", "推し", "素材待ち", "会心不足", "異常不足", "完成間近"];
 const buildPresets = {
   default: { label: "登録値", note: "登録済みソースの目標値と推奨ディスクを使います。" },
   signature: { label: "モチーフ想定", note: "複数ソースのモチーフ想定値や実用編成で多い方向に寄せます。" },
@@ -374,6 +375,7 @@ const el = {
   appUpdateStatus: document.querySelector("#appUpdateStatus"),
   checkAppUpdate: document.querySelector("#checkAppUpdateBtn"),
   openAppRelease: document.querySelector("#openAppReleaseBtn"),
+  setupPanel: document.querySelector("#setupPanel"),
   hoyolabLogin: document.querySelector("#hoyolabLoginBtn"),
   hoyolabSync: document.querySelector("#hoyolabSyncBtn"),
   hoyolabDisconnect: document.querySelector("#hoyolabDisconnectBtn"),
@@ -389,8 +391,17 @@ function todayKey() {
   return `${y}-${m}-${day}`;
 }
 
+function readJsonStorage(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function loadSettings() {
-  const saved = JSON.parse(localStorage.getItem("settings") || "{}");
+  const saved = readJsonStorage("settings", {});
   return {
     notifyDaily: saved.notifyDaily ?? true,
     autoUpdate: saved.autoUpdate ?? true,
@@ -404,7 +415,7 @@ function saveSettings() {
 
 function loadDailyState() {
   const key = todayKey();
-  const saved = JSON.parse(localStorage.getItem("dailyState") || "{}");
+  const saved = readJsonStorage("dailyState", {});
   if (saved.date !== key) {
     return { date: key, done: Array(dailyTasks.length).fill(false), lastNotified: "" };
   }
@@ -420,7 +431,7 @@ function saveDailyState() {
 }
 
 function loadTeamState() {
-  const saved = JSON.parse(localStorage.getItem("teamState") || "null");
+  const saved = readJsonStorage("teamState", null);
   return {
     slots: Array.from({ length: 3 }, (_, i) => saved?.slots?.[i] || "")
   };
@@ -431,7 +442,7 @@ function saveTeamState() {
 }
 
 function loadDiscWarehouse() {
-  return JSON.parse(localStorage.getItem("discWarehouse") || "[]");
+  return readJsonStorage("discWarehouse", []);
 }
 
 function saveDiscWarehouse(items) {
@@ -452,9 +463,24 @@ function discWarehouseEntry(character, disc, source = "手動") {
   };
 }
 
+function discWarehouseFingerprint(entry) {
+  const substats = Array.from({ length: 4 }, (_, index) => normalizeSubstat(entry.substats?.[index]))
+    .map((item) => `${item.name}:${item.value}`)
+    .join("|");
+  return [
+    entry.characterId || "",
+    entry.slot || "",
+    normalizeDiscSetName(entry.set || ""),
+    normalizeDiscMainName(entry.main, entry.slot),
+    substats
+  ].join("::");
+}
+
 function addDiscToWarehouse(character, disc, source = "手動") {
   const entry = discWarehouseEntry(character, disc, source);
-  const items = [entry, ...loadDiscWarehouse()].slice(0, 300);
+  const fingerprint = discWarehouseFingerprint(entry);
+  const existing = loadDiscWarehouse().filter((item) => discWarehouseFingerprint(item) !== fingerprint);
+  const items = [entry, ...existing].slice(0, 300);
   saveDiscWarehouse(items);
   return entry;
 }
@@ -594,6 +620,7 @@ function defaultComparisonState() {
       mindscape: 0,
       weapon: "",
       weaponRank: 1,
+      tags: [],
       memo: ""
     },
     materials: {
@@ -609,9 +636,16 @@ function defaultComparisonState() {
       ownedExp: 0,
       ownedPromotion: 0,
       ownedSkill: 0,
-      ownedCore: 0
+      ownedCore: 0,
+      dailyBattery: 300
     },
     discs: discSlots.map((slot) => ({
+      slot,
+      set: "",
+      main: fixedDiscMainStats[slot] || "",
+      substats: Array.from({ length: 4 }, () => ({ name: "", value: "" }))
+    })),
+    discCandidates: discSlots.map((slot) => ({
       slot,
       set: "",
       main: fixedDiscMainStats[slot] || "",
@@ -622,25 +656,37 @@ function defaultComparisonState() {
 
 function loadComparisonState(character) {
   const defaults = defaultComparisonState();
-  const saved = JSON.parse(localStorage.getItem(comparisonKey(character)) || "null");
+  const saved = readJsonStorage(comparisonKey(character), null);
   if (!saved) return defaults;
   return {
     stats: { ...defaults.stats, ...(saved.stats || {}) },
     customTargets: { ...(saved.customTargets || {}) },
     targetMode: saved.targetMode || defaults.targetMode,
-    ownership: { ...defaults.ownership, ...(saved.ownership || {}) },
+    ownership: {
+      ...defaults.ownership,
+      ...(saved.ownership || {}),
+      tags: Array.isArray(saved.ownership?.tags)
+        ? saved.ownership.tags
+        : String(saved.ownership?.tags || "").split(/[、,\s]+/).map((item) => item.trim()).filter(Boolean)
+    },
     materials: { ...defaults.materials, ...(saved.materials || {}) },
-    discs: discSlots.map((slot, index) => {
-      const disc = { ...defaults.discs[index], ...(saved.discs?.[index] || {}) };
-      disc.set = normalizeDiscSetName(disc.set);
-      if (fixedDiscMainStats[slot]) disc.main = fixedDiscMainStats[slot];
-      if (typeof disc.substats === "string") {
-        disc.substats = disc.substats.split(/[、,/]/).map((item) => item.trim()).filter(Boolean).slice(0, 4);
-      }
-      disc.substats = Array.from({ length: 4 }, (_, i) => normalizeSubstat(disc.substats?.[i]));
-      return disc;
-    })
+    discs: normalizeDiscList(defaults.discs, saved.discs),
+    discCandidates: normalizeDiscList(defaults.discCandidates, saved.discCandidates)
   };
+}
+
+function normalizeDiscList(defaults, savedList) {
+  return discSlots.map((slot, index) => {
+    const disc = { ...defaults[index], ...(savedList?.[index] || {}) };
+    disc.slot = slot;
+    disc.set = normalizeDiscSetName(disc.set);
+    if (fixedDiscMainStats[slot]) disc.main = fixedDiscMainStats[slot];
+    if (typeof disc.substats === "string") {
+      disc.substats = disc.substats.split(/[、,/]/).map((item) => item.trim()).filter(Boolean).slice(0, 4);
+    }
+    disc.substats = Array.from({ length: 4 }, (_, i) => normalizeSubstat(disc.substats?.[i]));
+    return disc;
+  });
 }
 
 function saveComparisonState(character, data) {
@@ -850,6 +896,21 @@ function readComparisonForm(base = defaultComparisonState()) {
         : Array.from({ length: 4 }, (_, i) => normalizeSubstat(baseDisc.substats?.[i]))
     };
   });
+  const discCandidates = discSlots.map((slot, index) => {
+    const baseDisc = base.discCandidates?.[index] || { slot, set: "", main: fixedDiscMainStats[slot] || "", substats: [] };
+    const subRows = Array.from(document.querySelectorAll(`[data-candidate-sub-row="${slot}"]`));
+    return {
+      slot,
+      set: normalizeDiscSetName(document.querySelector(`[data-candidate-set="${slot}"]`)?.value ?? baseDisc.set ?? ""),
+      main: fixedDiscMainStats[slot] || document.querySelector(`[data-candidate-main="${slot}"]`)?.value || baseDisc.main || "",
+      substats: subRows.length
+        ? subRows.map((row) => ({
+          name: row.querySelector("[data-candidate-sub-name]")?.value || "",
+          value: row.querySelector("[data-candidate-sub-value]")?.value || ""
+        }))
+        : Array.from({ length: 4 }, (_, i) => normalizeSubstat(baseDisc.substats?.[i]))
+    };
+  });
   const ownership = {
     ...(base.ownership || {}),
     owned: document.querySelector("[data-owned-input]") ? Boolean(document.querySelector("[data-owned-input]").checked) : base.ownership?.owned ?? false,
@@ -857,6 +918,10 @@ function readComparisonForm(base = defaultComparisonState()) {
     mindscape: Number(document.querySelector("[data-mindscape]")?.value ?? base.ownership?.mindscape ?? 0),
     weapon: document.querySelector("[data-weapon]")?.value ?? base.ownership?.weapon ?? "",
     weaponRank: Number(document.querySelector("[data-weapon-rank]")?.value ?? base.ownership?.weaponRank ?? 1),
+    tags: uniqueList(String(document.querySelector("[data-owned-tags]")?.value ?? (base.ownership?.tags || []).join("、"))
+      .split(/[、,\s]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)),
     memo: document.querySelector("[data-owned-memo]")?.value ?? base.ownership?.memo ?? ""
   };
   const materials = {
@@ -875,10 +940,12 @@ function readComparisonForm(base = defaultComparisonState()) {
   materials.ownedPromotion = Number(document.querySelector("[data-owned-promotion]")?.value ?? base.materials?.ownedPromotion ?? 0);
   materials.ownedSkill = Number(document.querySelector("[data-owned-skill]")?.value ?? base.materials?.ownedSkill ?? 0);
   materials.ownedCore = Number(document.querySelector("[data-owned-core]")?.value ?? base.materials?.ownedCore ?? 0);
+  materials.dailyBattery = Number(document.querySelector("[data-daily-battery]")?.value ?? base.materials?.dailyBattery ?? 300);
   return {
     stats,
     customTargets,
     discs,
+    discCandidates,
     targetMode: document.querySelector("[data-target-mode]")?.value ?? base.targetMode ?? "default",
     ownership,
     materials
@@ -1065,7 +1132,7 @@ function discHistoryKey(character) {
 }
 
 function loadDiscHistory(character) {
-  return JSON.parse(localStorage.getItem(discHistoryKey(character)) || "[]");
+  return readJsonStorage(discHistoryKey(character), []);
 }
 
 function saveDiscHistory(character, data, profile) {
@@ -1129,7 +1196,7 @@ function buildHistoryKey(character) {
 }
 
 function loadBuildHistory(character) {
-  return JSON.parse(localStorage.getItem(buildHistoryKey(character)) || "[]");
+  return readJsonStorage(buildHistoryKey(character), []);
 }
 
 function saveBuildHistory(character, data, source = "手動") {
@@ -1175,7 +1242,7 @@ async function fetchCharacters() {
 }
 
 async function loadCharacters({ force = false } = {}) {
-  const cached = JSON.parse(localStorage.getItem("characters") || "null");
+  const cached = readJsonStorage("characters", null);
   if (cached?.items?.length && cached.items.some((item) => item.icon) && !force) {
     state.characters = cached.items;
     el.dataStatus.textContent = `キャッシュ ${state.characters.length}件`;
@@ -1465,6 +1532,7 @@ function renderDiscsTab(profile, data) {
   const weights = Object.entries(profile.scoreWeights || {}).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const character = state.characters.find((item) => item.id === state.selectedId) || {};
   const classifications = data.discs.map((disc) => classifyDiscForCharacter(character, profile, disc));
+  const compareRows = discComparisonRows(profile, data);
   const scoreRows = data.discs.map((disc) => {
     const score = discScore(profile, disc);
     const classification = classifications[disc.slot - 1];
@@ -1487,6 +1555,14 @@ function renderDiscsTab(profile, data) {
       ${state.discImportStatus ? `<p class="import-status">${escapeHtml(state.discImportStatus)}</p>` : ""}
       <div class="disc-grid">${data.discs.map((disc) => renderDiscRow(profile, disc)).join("")}</div>
       <div class="disc-score-grid">${scoreRows}</div>
+      <div class="analysis-box compact-db">
+        <strong>現在装備 vs 比較候補</strong>
+        <ul>${compareRows.length ? compareRows.map((row) => `<li>${row.slot}番: 現在 ${row.current} / 候補 ${row.candidate} / ${row.delta >= 0 ? "+" : ""}${row.delta} - ${escapeHtml(row.note)}</li>`).join("") : "<li>比較候補を入力すると、倉庫なしで交換差分を確認できます。</li>"}</ul>
+      </div>
+      <details class="candidate-panel">
+        <summary>比較候補を入力</summary>
+        <div class="disc-grid candidate-grid">${data.discCandidates.map((disc) => renderCandidateDiscRow(profile, disc)).join("")}</div>
+      </details>
       <div class="analysis-box">
         <strong>自動仕分け</strong>
         <ul>${data.discs.map((disc) => {
@@ -1565,6 +1641,40 @@ function renderDiagnosisTab(character, profile, data) {
       </div>
     </section>
   `;
+}
+
+function discHasData(disc) {
+  if (!disc) return false;
+  const slot = Number(disc.slot || 0);
+  const main = normalizeDiscMainName(disc.main, slot);
+  const fixedOnly = fixedDiscMainStats[slot] && main === fixedDiscMainStats[slot];
+  return Boolean(disc.set || discSubstatText(disc) || (main && !fixedOnly));
+}
+
+function discComparisonRows(profile, data) {
+  return discSlots
+    .map((slot, index) => {
+      const currentDisc = data.discs[index];
+      const candidateDisc = data.discCandidates?.[index];
+      if (!discHasData(candidateDisc)) return null;
+      const current = discScore(profile, currentDisc);
+      const candidate = discScore(profile, candidateDisc);
+      const delta = candidate - current;
+      return {
+        slot,
+        current,
+        candidate,
+        delta,
+        note: delta >= 8
+          ? "交換優先"
+          : delta >= 3
+            ? "微更新候補"
+            : delta >= 0
+              ? "ほぼ横並び"
+              : "現在装備を維持"
+      };
+    })
+    .filter(Boolean);
 }
 
 function warehouseScoreForCharacter(entry, character) {
@@ -1692,6 +1802,7 @@ function renderDiscSetDatabasePanel(profile) {
 
 function renderOwnedTab(data) {
   const owned = data.ownership;
+  const tags = Array.isArray(owned.tags) ? owned.tags : [];
   return `
     <section class="glass-panel metric-panel">
       <div class="panel-heading compact">
@@ -1707,6 +1818,10 @@ function renderOwnedTab(data) {
         <label class="select-line"><span>凸数</span><input data-mindscape type="number" min="0" max="6" value="${owned.mindscape}" /></label>
         <label class="select-line"><span>音動機</span><input data-weapon value="${escapeHtml(owned.weapon)}" placeholder="装備中の音動機" /></label>
         <label class="select-line"><span>音動機ランク</span><input data-weapon-rank type="number" min="1" max="5" value="${owned.weaponRank}" /></label>
+        <label class="select-line wide"><span>タグ</span><input data-owned-tags value="${escapeHtml(tags.join("、"))}" placeholder="厳選中、危局用、会心不足..." /></label>
+        <div class="tag-suggestions">
+          ${quickTagOptions.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
+        </div>
         <label class="select-line wide"><span>メモ</span><textarea data-owned-memo placeholder="厳選方針、次にやること">${escapeHtml(owned.memo)}</textarea></label>
       </div>
     </section>
@@ -1734,8 +1849,30 @@ function materialShortage(estimate, materials) {
     exp: Math.max(0, estimate.exp - (materials.ownedExp || 0)),
     promotion: Math.max(0, estimate.promotion - (materials.ownedPromotion || 0)),
     skill: Math.max(0, estimate.skill - (materials.ownedSkill || 0)),
-    core: Math.max(0, estimate.core - (materials.ownedCore || 0))
+    core: Math.max(0, estimate.core - (materials.ownedCore || 0)),
+    battery: estimate.battery
   };
+}
+
+function materialPlanRows(shortage, materials) {
+  const daily = Math.max(1, Number(materials.dailyBattery || 300));
+  const roughBattery = Math.max(
+    0,
+    Math.round(shortage.battery
+      + shortage.denny / 2500
+      + shortage.exp * 4
+      + shortage.promotion * 12
+      + shortage.skill * 8
+      + shortage.core * 20)
+  );
+  const days = Math.max(0, Math.ceil(roughBattery / daily));
+  const rows = [
+    { label: "昇格/レベル", value: shortage.exp + shortage.promotion, note: shortage.exp || shortage.promotion ? "Lvと昇格素材を先に確保" : "足りています" },
+    { label: "スキル", value: shortage.skill, note: shortage.skill ? "主力スキルから順に強化" : "足りています" },
+    { label: "コア", value: shortage.core, note: shortage.core ? "週ボス/コア素材を確認" : "足りています" },
+    { label: "ディニー", value: shortage.denny, note: shortage.denny ? "全工程で不足しやすい枠" : "足りています" }
+  ].sort((a, b) => Number(b.value > 0) - Number(a.value > 0) || b.value - a.value);
+  return { roughBattery, days, rows };
 }
 
 function roadmapItems(character, profile, data) {
@@ -1758,6 +1895,7 @@ function renderMaterialsTab(character, data) {
   const materials = data.materials;
   const estimate = materialEstimate(materials);
   const shortage = materialShortage(estimate, materials);
+  const plan = materialPlanRows(shortage, materials);
   return `
     <section class="agent-page-grid">
       <div class="glass-panel metric-panel">
@@ -1776,6 +1914,7 @@ function renderMaterialsTab(character, data) {
           <label class="select-line"><span>昇格素材タイプ</span><select data-promotion-type>${materialTypeOptions.map((item) => `<option value="${item}" ${materials.promotionType === item || (!materials.promotionType && character.role === item) ? "selected" : ""}>${item}</option>`).join("")}</select></label>
           <label class="select-line"><span>スキル素材タイプ</span><select data-skill-type>${skillTypeOptions.map((item) => `<option value="${item}" ${materials.skillType === item || (!materials.skillType && character.element === item) ? "selected" : ""}>${item}</option>`).join("")}</select></label>
           <label class="select-line"><span>週ボス素材</span><select data-weekly-boss-type>${weeklyBossOptions.map((item) => `<option value="${item}" ${materials.weeklyBossType === item ? "selected" : ""}>${item}</option>`).join("")}</select></label>
+          <label class="select-line"><span>1日の活性目安</span><input data-daily-battery type="number" min="1" max="1000" value="${materials.dailyBattery || 300}" /></label>
           <label class="toggle-line compact"><input data-weekly-boss type="checkbox" ${materials.weeklyBossDone ? "checked" : ""} /><span>週ボス済み</span></label>
         </div>
       </div>
@@ -1788,7 +1927,11 @@ function renderMaterialsTab(character, data) {
           <div class="summary-card"><span>昇格素材</span><strong>${shortage.promotion}</strong><em>${escapeHtml(materials.promotionType || character.role)} / 必要 ${estimate.promotion}</em><input data-owned-promotion type="number" value="${materials.ownedPromotion || 0}" /></div>
           <div class="summary-card"><span>スキル素材</span><strong>${shortage.skill}</strong><em>${escapeHtml(materials.skillType || character.element)} / 必要 ${estimate.skill}</em><input data-owned-skill type="number" value="${materials.ownedSkill || 0}" /></div>
           <div class="summary-card"><span>コア素材</span><strong>${shortage.core}</strong><em>${escapeHtml(materials.weeklyBossType)} / 必要 ${estimate.core}</em><input data-owned-core type="number" value="${materials.ownedCore || 0}" /></div>
-          <div class="summary-card"><span>必要活性</span><strong>${estimate.battery}</strong><em>目安</em></div>
+          <div class="summary-card"><span>必要活性</span><strong>${plan.roughBattery}</strong><em>約 ${plan.days} 日 / 1日${materials.dailyBattery || 300}</em></div>
+        </div>
+        <div class="analysis-box compact-db">
+          <strong>素材優先順</strong>
+          <ul>${plan.rows.map((row) => `<li>${escapeHtml(row.label)}: ${Number(row.value).toLocaleString("ja-JP")} / ${escapeHtml(row.note)}</li>`).join("")}</ul>
         </div>
       </div>
     </section>
@@ -2108,6 +2251,32 @@ function contentPresetSuggestions(items, templateMatches, synergy) {
   }).sort((a, b) => b.score - a.score);
 }
 
+function recommendedTeamPartners(items, synergy) {
+  const anchor = synergy.anchor || chooseTeamAnchor(items);
+  if (!anchor) return [];
+  return state.characters
+    .filter((candidate) => !items.some((item) => item.id === candidate.id))
+    .map((candidate) => {
+      const fit = supportFitScore(candidate, anchor, [...items, candidate]);
+      const ability = additionalAbilityStatus(candidate, [...items, candidate]);
+      let score = fit.score + (ability.active ? 8 : 0);
+      if (candidate.role === "支援" || candidate.role === "防護") score += 6;
+      if (anchor.role === "異常" && candidate.role === "異常" && candidate.element !== anchor.element) score += 10;
+      if (anchor.role === "強攻" && candidate.role === "撃破") score += 8;
+      if (anchor.role === "命破" && ["撃破", "支援", "防護"].includes(candidate.role)) score += 7;
+      return {
+        character: candidate,
+        score: Math.max(0, Math.min(100, score)),
+        notes: uniqueList([
+          ...fit.notes,
+          ability.active ? `追加能力条件を満たしやすいです` : `追加能力条件: ${ability.requirement}`
+        ]).slice(0, 2)
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+}
+
 function renderTeamSimulator() {
   if (!el.teamPanel) return;
   const selected = teamCharacters();
@@ -2115,6 +2284,7 @@ function renderTeamSimulator() {
   const templateMatches = teamTemplateSuggestions(selected, synergy);
   const orderNotes = teamOrderAdvice(selected, synergy);
   const presetMatches = contentPresetSuggestions(selected, templateMatches, synergy);
+  const partnerMatches = recommendedTeamPartners(selected, synergy);
   const options = [`<option value="">未選択</option>`]
     .concat(state.characters.map((character) => `<option value="${character.id}">${escapeHtml(character.name)} / ${escapeHtml(character.role)} / ${escapeHtml(character.element)} / ${escapeHtml(campName(character))}</option>`))
     .join("");
@@ -2188,6 +2358,10 @@ function renderTeamSimulator() {
           <em>${escapeHtml(preset.needs.join(" / "))}${preset.matched.length ? ` / 一致: ${escapeHtml(preset.matched.join("・"))}` : ""}</em>
         </article>
       `).join("")}
+    </div>
+    <div class="analysis-box compact-db">
+      <strong>相性候補</strong>
+      <ul>${partnerMatches.length ? partnerMatches.map((row) => `<li>${escapeHtml(row.character.name)} / ${escapeHtml(row.character.role)} / ${escapeHtml(row.character.element)}: ${row.score} - ${escapeHtml(row.notes.join(" / "))}</li>`).join("") : "<li>主軸キャラを選ぶと相性候補を表示します。</li>"}</ul>
     </div>
     <div class="analysis-box">
       <strong>編成メモ</strong>
@@ -2364,7 +2538,10 @@ async function importDiscFromImage(character) {
     };
     saveComparisonState(character, base);
     const filled = base.discs[index].substats.filter((item) => item.name || item.value).length;
-    state.discImportStatus = `${targetSlot}番へ画像OCR結果を反映しました。サブステ ${filled}/4 件。`;
+    if (base.discs[index].set || base.discs[index].main || discSubstatText(base.discs[index])) {
+      addDiscToWarehouse(character, base.discs[index], "画像OCR");
+    }
+    state.discImportStatus = `${targetSlot}番へ画像OCR結果を反映し、倉庫にも保存しました。サブステ ${filled}/4 件。`;
   } catch (error) {
     state.discImportStatus = `ディスク画像読み取りに失敗しました: ${error.message || error}`;
   }
@@ -2457,6 +2634,49 @@ function renderDiscRow(profile, disc) {
   `;
 }
 
+function renderCandidateDiscRow(profile, disc) {
+  const recommended = profile.mainStats[disc.slot] || [];
+  const fixedMain = fixedDiscMainStats[disc.slot];
+  const selectedSet = normalizeDiscSetName(disc.set);
+  const selectedMain = fixedMain || normalizeDiscMainName(disc.main, disc.slot);
+  const setOptions = discSetOptions.map((option) => (
+    `<option value="${escapeHtml(option)}" ${selectedSet === option ? "selected" : ""}>${escapeHtml(option || "未入力")}</option>`
+  )).join("");
+  const mainOptions = targetData.discMainOptions.map((option) => (
+    `<option value="${escapeHtml(option)}" ${selectedMain === option ? "selected" : ""}>${escapeHtml(option || "未入力")}</option>`
+  )).join("");
+  const subSelects = Array.from({ length: 4 }, (_, i) => {
+    const sub = normalizeSubstat(disc.substats?.[i]);
+    return `<div class="substat-pair" data-candidate-sub-row="${disc.slot}">
+      <select data-candidate-sub-name aria-label="${disc.slot}番候補サブステ${i + 1}">
+        ${discSubstatOptions.map((option) => `<option value="${escapeHtml(option)}" ${sub.name === option ? "selected" : ""}>${escapeHtml(option || `サブ${i + 1}`)}</option>`).join("")}
+      </select>
+      <input data-candidate-sub-value type="number" step="0.1" value="${escapeHtml(sub.value)}" placeholder="${substatUnit(sub.name) || "値"}" aria-label="${disc.slot}番候補サブステ${i + 1}数値" />
+    </div>`;
+  }).join("");
+  const score = discScore(profile, disc);
+  return `
+    <article class="disc-row candidate-row">
+      <div class="disc-slot">${disc.slot}</div>
+      <label>
+        <span>候補セット</span>
+        <select data-candidate-set="${disc.slot}">${setOptions}</select>
+      </label>
+      <label>
+        <span>候補メイン</span>
+        ${fixedMain
+          ? `<input data-candidate-main="${disc.slot}" value="${escapeHtml(fixedMain)}" readonly aria-readonly="true" />`
+          : `<select data-candidate-main="${disc.slot}">${mainOptions}</select>`}
+      </label>
+      <label>
+        <span>候補サブステ / 数値</span>
+        <div class="substat-selects">${subSelects}</div>
+      </label>
+      <small>候補: ${fixedMain ? `メイン固定 ${escapeHtml(fixedMain)}` : escapeHtml(recommended.join(" / ") || "未確認")} / 候補スコア ${score}</small>
+    </article>
+  `;
+}
+
 function bindAgentPageEvents(character) {
   const saveAndRender = () => {
     saveComparisonState(character, readComparisonForm(loadComparisonState(character)));
@@ -2491,7 +2711,7 @@ function bindAgentPageEvents(character) {
   });
   el.agentPage.querySelector("#saveDiscsWarehouseBtn")?.addEventListener("click", () => {
     const data = readComparisonForm(loadComparisonState(character));
-    const filled = data.discs.filter((disc) => disc.set || disc.main || discSubstatText(disc));
+    const filled = data.discs.filter((disc) => discHasData(disc));
     filled.forEach((disc) => addDiscToWarehouse(character, disc, "キャラ装備"));
     state.discImportStatus = `${filled.length}枚をディスク倉庫へ保存しました。`;
     saveComparisonState(character, data);
@@ -2504,6 +2724,15 @@ function bindAgentPageEvents(character) {
   el.agentPage.querySelector("#clearCompareBtn")?.addEventListener("click", () => {
     localStorage.removeItem(comparisonKey(character));
     renderAgentPage(character);
+  });
+  el.agentPage.querySelectorAll(".tag-suggestions span").forEach((tag) => {
+    tag.addEventListener("click", () => {
+      const input = el.agentPage.querySelector("[data-owned-tags]");
+      if (!input) return;
+      const tags = uniqueList(`${input.value}、${tag.textContent}`.split(/[、,\s]+/).map((item) => item.trim()).filter(Boolean));
+      input.value = tags.join("、");
+      saveAndRender();
+    });
   });
   el.agentPage.querySelectorAll("input, select, textarea").forEach((input) => {
     input.addEventListener("change", saveAndRender);
@@ -2668,6 +2897,9 @@ function applyHoyolabSync(result) {
       const slot = Number(importedDisc.slot);
       if (!discSlots.includes(slot)) continue;
       data.discs[slot - 1] = mergeHoyolabDisc(data.discs[slot - 1], importedDisc);
+      if (discHasData(data.discs[slot - 1])) {
+        addDiscToWarehouse(character, data.discs[slot - 1], "HoYoLAB同期");
+      }
       discCount += 1;
     }
     saveComparisonState(character, data);
@@ -2766,13 +2998,13 @@ function saveSyncDiff(before, after, result) {
     uid: result.role?.uid || "",
     changes: changes.slice(0, 40)
   };
-  const history = [entry, ...JSON.parse(localStorage.getItem("hoyolabSyncHistory") || "[]")].slice(0, 10);
+  const history = [entry, ...readJsonStorage("hoyolabSyncHistory", [])].slice(0, 10);
   localStorage.setItem("hoyolabSyncHistory", JSON.stringify(history));
   return entry;
 }
 
 function loadSyncHistory() {
-  return JSON.parse(localStorage.getItem("hoyolabSyncHistory") || "[]");
+  return readJsonStorage("hoyolabSyncHistory", []);
 }
 
 function growthPriorityRows() {
@@ -2844,6 +3076,54 @@ function switchView(view) {
   if (view === "team") renderTeamSimulator();
   if (view === "warehouse") renderWarehousePanel();
   if (view === "account") renderAccountDashboard();
+  if (view === "settings") renderSetupPanel();
+}
+
+function setupChecklist() {
+  const ownedCount = state.characters.filter((character) => loadComparisonState(character).ownership.owned).length;
+  return [
+    { label: "キャラデータ更新", done: state.characters.length > 0, note: `${state.characters.length}名` },
+    { label: "HoYoLAB同期", done: ownedCount > 0, note: ownedCount ? `所持 ${ownedCount}名` : "未同期" },
+    { label: "通知設定", done: state.settings.notifyDaily, note: state.settings.notifyDaily ? "ON" : "OFF" },
+    { label: "アップデート確認", done: state.settings.appUpdate, note: state.settings.appUpdate ? "ON" : "OFF" }
+  ];
+}
+
+function renderSetupPanel() {
+  if (!el.setupPanel) return;
+  const checklist = setupChecklist();
+  el.setupPanel.innerHTML = `
+    <div>
+      <strong>初回セットアップ</strong>
+      <p class="muted">配布版を入れた後に確認する項目です。</p>
+    </div>
+    <div class="setup-list">
+      ${checklist.map((item) => `
+        <span class="${item.done ? "done" : ""}">
+          <b>${item.done ? "OK" : "未"}</b>
+          ${escapeHtml(item.label)}
+          <em>${escapeHtml(item.note)}</em>
+        </span>
+      `).join("")}
+    </div>
+    <div class="button-row">
+      <button class="pill-button" id="setupRefreshDataBtn">データ更新</button>
+      <button class="pill-button" id="setupCheckUpdateBtn">更新確認</button>
+      <button class="pill-button primary" id="setupHoyolabBtn">HoYoLABログイン</button>
+    </div>
+  `;
+  el.setupPanel.querySelector("#setupRefreshDataBtn")?.addEventListener("click", async () => {
+    await loadCharacters({ force: true });
+    renderSetupPanel();
+  });
+  el.setupPanel.querySelector("#setupCheckUpdateBtn")?.addEventListener("click", async () => {
+    await checkAppUpdate();
+    renderSetupPanel();
+  });
+  el.setupPanel.querySelector("#setupHoyolabBtn")?.addEventListener("click", async () => {
+    await loginHoyolab();
+    renderSetupPanel();
+  });
 }
 
 function bindEvents() {
@@ -2861,6 +3141,7 @@ function bindEvents() {
   el.notificationToggle.addEventListener("change", () => {
     state.settings.notifyDaily = el.notificationToggle.checked;
     saveSettings();
+    renderSetupPanel();
   });
   el.autoUpdateToggle.addEventListener("change", () => {
     state.settings.autoUpdate = el.autoUpdateToggle.checked;
@@ -2869,6 +3150,7 @@ function bindEvents() {
   el.appUpdateToggle.addEventListener("change", () => {
     state.settings.appUpdate = el.appUpdateToggle.checked;
     saveSettings();
+    renderSetupPanel();
   });
   el.refreshData.addEventListener("click", () => loadCharacters({ force: true }));
   el.checkAppUpdate?.addEventListener("click", () => checkAppUpdate());
@@ -2890,6 +3172,7 @@ async function init() {
   renderTeamSimulator();
   renderWarehousePanel();
   renderAccountDashboard();
+  renderSetupPanel();
   if (state.characters[0]) {
     state.selectedId = state.characters[0].id;
     renderCharacters();

@@ -922,6 +922,23 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.tag-suggestions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-suggestions span {
+  border: 1px solid rgba(181, 124, 255, 0.28);
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: var(--muted);
+  background: rgba(181, 124, 255, 0.08);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .toggle-line.compact {
   min-height: 38px;
 }
@@ -940,6 +957,28 @@ h3 {
   border-radius: 16px;
   padding: 14px;
   background: rgba(8, 5, 18, 0.42);
+}
+
+.candidate-panel {
+  margin-top: 14px;
+  border: 1px solid rgba(100, 214, 255, 0.24);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(9, 18, 31, 0.36);
+}
+
+.candidate-panel summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-weight: 900;
+}
+
+.candidate-grid {
+  margin-top: 12px;
+}
+
+.candidate-row {
+  border-color: rgba(100, 214, 255, 0.24);
 }
 
 .substat-selects {
@@ -1164,7 +1203,7 @@ h3 {
   border-radius: 999px;
   padding: 4px 8px;
   background: rgba(255, 214, 0, 0.14);
-  color: var(--yellow);
+  color: var(--gold);
   font-size: 12px;
   font-weight: 900;
 }
@@ -1273,7 +1312,7 @@ h3 {
 .warehouse-card-head span {
   border-radius: 999px;
   padding: 4px 8px;
-  color: var(--yellow);
+  color: var(--gold);
   background: rgba(255, 214, 0, 0.14);
   font-size: 12px;
   font-weight: 900;
@@ -1287,6 +1326,52 @@ h3 {
   font-size: 12px;
   font-style: normal;
   line-height: 1.5;
+}
+
+.setup-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(120, 240, 189, 0.26);
+  border-radius: 16px;
+  padding: 16px;
+  background: rgba(120, 240, 189, 0.07);
+}
+
+.setup-panel strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.setup-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.setup-list span {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(255, 112, 207, 0.26);
+  border-radius: 12px;
+  padding: 10px;
+  color: var(--muted);
+  background: rgba(8, 5, 18, 0.34);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.setup-list span.done {
+  border-color: rgba(120, 240, 189, 0.34);
+}
+
+.setup-list b {
+  color: var(--green);
+}
+
+.setup-list em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 700;
 }
 
 .analysis-box {
