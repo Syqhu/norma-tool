@@ -1,6 +1,12 @@
-## norma tool v0.1.0 beta
+## norma tool v0.1.1 beta
 
 ZZZ向け育成管理アプリ「norma tool」のβ版です。
+
+### 今回の追加
+
+- GitHub Releasesのアップデート確認
+- 起動時の自動チェック設定
+- 設定画面から最新リリースを開くボタン
 
 ### 入っているもの
 
@@ -16,6 +22,7 @@ ZZZ向け育成管理アプリ「norma tool」のβ版です。
 - HoYoLAB同期
 - 育成優先度ダッシュボード
 - デイリー未完了通知
+- GitHub Releasesのアップデート確認
 
 ### 追加予定
 

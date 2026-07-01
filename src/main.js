@@ -1,5 +1,6 @@
 ﻿const { app, BrowserWindow, ipcMain, Notification, dialog, session } = require("electron");
 const path = require("path");
+const { shell } = require("electron");
 const sharp = require("sharp");
 const { createWorker } = require("tesseract.js");
 
@@ -11,6 +12,66 @@ const hoyolabRoleEndpoints = [
   "https://api-os-takumi.hoyoverse.com/binding/api/getUserGameRolesByCookie",
   "https://api-os-takumi.hoyolab.com/binding/api/getUserGameRolesByCookie"
 ];
+const githubRepo = "Syqhu/norma-tool";
+const githubReleasesUrl = `https://api.github.com/repos/${githubRepo}/releases?per_page=20`;
+
+function parseVersionTag(value) {
+  const text = String(value || "").trim().replace(/^v/i, "");
+  const [core, prerelease] = text.split("-");
+  const nums = core.split(".").map((item) => Number.parseInt(item, 10));
+  return {
+    major: Number.isFinite(nums[0]) ? nums[0] : 0,
+    minor: Number.isFinite(nums[1]) ? nums[1] : 0,
+    patch: Number.isFinite(nums[2]) ? nums[2] : 0,
+    prerelease: Boolean(prerelease)
+  };
+}
+
+function compareVersions(a, b) {
+  const left = parseVersionTag(a);
+  const right = parseVersionTag(b);
+  for (const key of ["major", "minor", "patch"]) {
+    if (left[key] !== right[key]) return left[key] > right[key] ? 1 : -1;
+  }
+  if (left.prerelease !== right.prerelease) return left.prerelease ? -1 : 1;
+  return 0;
+}
+
+async function checkGithubUpdate() {
+  const response = await fetch(githubReleasesUrl, {
+    headers: {
+      accept: "application/vnd.github+json",
+      "user-agent": "norma-tool-update-checker"
+    }
+  });
+  if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
+  const releases = await response.json();
+  const release = (Array.isArray(releases) ? releases : [])
+    .filter((item) => !item.draft && item.tag_name)
+    .sort((a, b) => {
+      const versionDiff = compareVersions(b.tag_name, a.tag_name);
+      if (versionDiff !== 0) return versionDiff;
+      return new Date(b.published_at || b.created_at || 0) - new Date(a.published_at || a.created_at || 0);
+    })[0];
+  if (!release) throw new Error("GitHub Releaseが見つかりませんでした。");
+  const currentVersion = app.getVersion();
+  const latestVersion = String(release.tag_name || "").replace(/^v/i, "");
+  return {
+    hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
+    currentVersion,
+    latestVersion,
+    tagName: release.tag_name || "",
+    name: release.name || release.tag_name || "",
+    releaseUrl: release.html_url || `https://github.com/${githubRepo}/releases`,
+    publishedAt: release.published_at || "",
+    body: release.body || "",
+    assets: (release.assets || []).map((asset) => ({
+      name: asset.name,
+      size: asset.size,
+      downloadUrl: asset.browser_download_url
+    }))
+  };
+}
 
 const hoyolabStatMap = [
   { key: "critDmg", patterns: [/会心ダメージ/i, /会心ダメ/i, /CRIT DMG/i, /Crit DMG/i] },
@@ -531,6 +592,17 @@ ipcMain.handle("get-app-info", () => ({
   version: app.getVersion(),
   dataPath: app.getPath("userData")
 }));
+
+ipcMain.handle("check-app-update", () => checkGithubUpdate());
+
+ipcMain.handle("open-external-url", async (_event, url) => {
+  const target = String(url || "");
+  if (!/^https:\/\/github\.com\/Syqhu\/norma-tool(?:\/|$)/i.test(target)) {
+    throw new Error("許可されていないURLです。");
+  }
+  await shell.openExternal(target);
+  return true;
+});
 
 ipcMain.handle("hoyolab-login", async () => {
   const loginWindow = new BrowserWindow({

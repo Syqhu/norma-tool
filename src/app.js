@@ -347,7 +347,8 @@ const state = {
     search: "",
     set: "",
     slot: ""
-  }
+  },
+  updateInfo: null
 };
 
 const el = {
@@ -368,7 +369,11 @@ const el = {
   notifyNow: document.querySelector("#notifyNowBtn"),
   notificationToggle: document.querySelector("#notificationToggle"),
   autoUpdateToggle: document.querySelector("#autoUpdateToggle"),
+  appUpdateToggle: document.querySelector("#appUpdateToggle"),
   refreshData: document.querySelector("#refreshDataBtn"),
+  appUpdateStatus: document.querySelector("#appUpdateStatus"),
+  checkAppUpdate: document.querySelector("#checkAppUpdateBtn"),
+  openAppRelease: document.querySelector("#openAppReleaseBtn"),
   hoyolabLogin: document.querySelector("#hoyolabLoginBtn"),
   hoyolabSync: document.querySelector("#hoyolabSyncBtn"),
   hoyolabDisconnect: document.querySelector("#hoyolabDisconnectBtn"),
@@ -388,7 +393,8 @@ function loadSettings() {
   const saved = JSON.parse(localStorage.getItem("settings") || "{}");
   return {
     notifyDaily: saved.notifyDaily ?? true,
-    autoUpdate: saved.autoUpdate ?? true
+    autoUpdate: saved.autoUpdate ?? true,
+    appUpdate: saved.appUpdate ?? true
   };
 }
 
@@ -2544,6 +2550,58 @@ async function notifyIfDailyIncomplete({ force = false } = {}) {
   saveDailyState();
 }
 
+function setAppUpdateStatus(message) {
+  if (el.appUpdateStatus) el.appUpdateStatus.textContent = message;
+}
+
+function formatReleaseDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" });
+}
+
+async function checkAppUpdate({ silent = false } = {}) {
+  if (!window.zzzApp?.checkAppUpdate) return null;
+  if (!silent) setAppUpdateStatus("GitHub Releasesを確認中です。");
+  try {
+    const info = await window.zzzApp.checkAppUpdate();
+    state.updateInfo = info;
+    if (el.openAppRelease) {
+      el.openAppRelease.disabled = !info.releaseUrl;
+      el.openAppRelease.dataset.releaseUrl = info.releaseUrl || "";
+    }
+    const releaseDate = formatReleaseDate(info.publishedAt);
+    if (info.hasUpdate) {
+      setAppUpdateStatus(`新しい版があります: ${info.tagName || info.latestVersion}${releaseDate ? ` / ${releaseDate}` : ""}`);
+      const notifyKey = `appUpdateNotified:${info.tagName || info.latestVersion}`;
+      if (!silent || localStorage.getItem(notifyKey) !== "1") {
+        await window.zzzApp.notifyDailyIncomplete({
+          title: "norma tool アップデート",
+          body: `GitHubに ${info.tagName || info.latestVersion} が公開されています。`
+        });
+        localStorage.setItem(notifyKey, "1");
+      }
+    } else {
+      setAppUpdateStatus(`最新版です: App ${info.currentVersion}${info.tagName ? ` / GitHub ${info.tagName}` : ""}`);
+    }
+    return info;
+  } catch (error) {
+    if (!silent) setAppUpdateStatus(`確認に失敗: ${error.message || error}`);
+    return null;
+  }
+}
+
+async function openLatestRelease() {
+  const url = state.updateInfo?.releaseUrl || el.openAppRelease?.dataset.releaseUrl;
+  if (!url || !window.zzzApp?.openExternalUrl) return;
+  try {
+    await window.zzzApp.openExternalUrl(url);
+  } catch (error) {
+    setAppUpdateStatus(`リリースを開けませんでした: ${error.message || error}`);
+  }
+}
+
 function hoyolabCharacterMatch(item) {
   const id = Number(item.id || 0);
   if (id) {
@@ -2799,6 +2857,7 @@ function bindEvents() {
   el.notifyNow.addEventListener("click", () => notifyIfDailyIncomplete({ force: true }));
   el.notificationToggle.checked = state.settings.notifyDaily;
   el.autoUpdateToggle.checked = state.settings.autoUpdate;
+  el.appUpdateToggle.checked = state.settings.appUpdate;
   el.notificationToggle.addEventListener("change", () => {
     state.settings.notifyDaily = el.notificationToggle.checked;
     saveSettings();
@@ -2807,7 +2866,13 @@ function bindEvents() {
     state.settings.autoUpdate = el.autoUpdateToggle.checked;
     saveSettings();
   });
+  el.appUpdateToggle.addEventListener("change", () => {
+    state.settings.appUpdate = el.appUpdateToggle.checked;
+    saveSettings();
+  });
   el.refreshData.addEventListener("click", () => loadCharacters({ force: true }));
+  el.checkAppUpdate?.addEventListener("click", () => checkAppUpdate());
+  el.openAppRelease?.addEventListener("click", openLatestRelease);
   el.hoyolabLogin?.addEventListener("click", loginHoyolab);
   el.hoyolabSync?.addEventListener("click", syncHoyolab);
   el.hoyolabDisconnect?.addEventListener("click", disconnectHoyolab);
@@ -2834,6 +2899,9 @@ async function init() {
   setInterval(() => notifyIfDailyIncomplete(), 1000 * 60 * 30);
   const info = await window.zzzApp.getAppInfo();
   el.appInfo.textContent = `App ${info.version} / 保存先: ${info.dataPath}`;
+  if (state.settings.appUpdate) {
+    setTimeout(() => checkAppUpdate({ silent: true }), 1800);
+  }
   refreshHoyolabStatus();
   finishSplash();
 }

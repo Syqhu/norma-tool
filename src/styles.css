@@ -494,7 +494,8 @@ h3 {
   gap: 16px;
 }
 
-.hoyolab-panel {
+.hoyolab-panel,
+.update-panel {
   display: grid;
   gap: 14px;
   border: 1px solid rgba(100, 214, 255, 0.25);
@@ -502,14 +503,22 @@ h3 {
   padding: 18px;
 }
 
-.hoyolab-panel strong {
+.hoyolab-panel strong,
+.update-panel strong {
   display: block;
   margin-bottom: 4px;
   font-size: 16px;
 }
 
-.hoyolab-panel .button-row {
+.hoyolab-panel .button-row,
+.update-panel .button-row {
   justify-content: flex-start;
+}
+
+.pill-button:disabled {
+  cursor: default;
+  opacity: 0.48;
+  box-shadow: none;
 }
 
 .pill-button.danger {

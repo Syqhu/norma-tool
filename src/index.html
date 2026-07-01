@@ -100,7 +100,21 @@
               <input id="autoUpdateToggle" type="checkbox" />
               <span>起動時にキャラデータを自動更新する</span>
             </label>
+            <label class="toggle-line">
+              <input id="appUpdateToggle" type="checkbox" />
+              <span>起動時にGitHubの新しいリリースを確認する</span>
+            </label>
             <button id="refreshDataBtn" class="pill-button">キャラデータを更新</button>
+            <div class="update-panel">
+              <div>
+                <strong>GitHubアップデート</strong>
+                <p id="appUpdateStatus" class="muted">未確認</p>
+              </div>
+              <div class="button-row">
+                <button id="checkAppUpdateBtn" class="pill-button">今すぐ確認</button>
+                <button id="openAppReleaseBtn" class="pill-button primary" disabled>リリースを開く</button>
+              </div>
+            </div>
             <div class="hoyolab-panel">
               <div>
                 <strong>HoYoLAB連携</strong>
