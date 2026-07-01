@@ -14,5 +14,6 @@ contextBridge.exposeInMainWorld("zzzApp", {
   hoyolabLogin: () => ipcRenderer.invoke("hoyolab-login"),
   hoyolabStatus: () => ipcRenderer.invoke("hoyolab-status"),
   hoyolabSync: () => ipcRenderer.invoke("hoyolab-sync"),
+  hoyolabDailyStatus: () => ipcRenderer.invoke("hoyolab-daily-status"),
   hoyolabDisconnect: () => ipcRenderer.invoke("hoyolab-disconnect")
 });

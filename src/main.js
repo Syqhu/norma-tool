@@ -9,6 +9,7 @@ let mainWindow;
 const hoyolabPartition = "persist:norma-tool-hoyolab";
 const hoyolabBattleRecordUrl = "https://act.hoyolab.com/app/zzz-game-record/index.html?lang=ja-jp";
 const hoyolabApiBase = "https://sg-act-public-api.hoyolab.com/event/game_record_zzz";
+const hoyolabNoteUrl = "https://sg-act-nap-api.hoyolab.com/event/game_record_zzz/api/zzz/note";
 const hoyolabRoleEndpoints = [
   "https://api-os-takumi.hoyoverse.com/binding/api/getUserGameRolesByCookie",
   "https://api-os-takumi.hoyolab.com/binding/api/getUserGameRolesByCookie"
@@ -343,6 +344,62 @@ async function fetchHoyolabZzzData(role, cookies) {
     },
     characters: details,
     rawCount: avatars.length
+  };
+}
+
+function normalizeHoyolabDailyNote(data) {
+  const vitality = data?.vitality || {};
+  const energy = data?.energy || {};
+  const shopState = {
+    SaleStateNo: "closed",
+    SaleStateDoing: "open",
+    SaleStateDone: "finished"
+  }[data?.vhs_sale?.sale_state] || "unknown";
+  const vitalityCurrent = Number(vitality.current ?? 0);
+  const vitalityMax = Number(vitality.max ?? 0);
+  const energyCurrent = Number(energy.progress?.current ?? 0);
+  const energyMax = Number(energy.progress?.max ?? 0);
+  return {
+    checkedAt: new Date().toISOString(),
+    vitality: {
+      current: vitalityCurrent,
+      max: vitalityMax,
+      done: vitalityMax > 0 && vitalityCurrent >= vitalityMax
+    },
+    energy: {
+      current: energyCurrent,
+      max: energyMax,
+      spent: energyMax > 0 && energyCurrent < energyMax,
+      restore: Number(energy.restore ?? 0)
+    },
+    scratch: {
+      done: data?.card_sign === "CardSignDone",
+      raw: data?.card_sign || ""
+    },
+    shop: {
+      state: shopState,
+      raw: data?.vhs_sale?.sale_state || ""
+    },
+    weeklies: {
+      bounty: Number(data?.bounty_commission?.num ?? 0),
+      bountyTotal: Number(data?.bounty_commission?.total ?? 0),
+      surveyPoints: Number(data?.survey_points?.num ?? 0),
+      surveyPointsTotal: Number(data?.survey_points?.total ?? 0)
+    },
+    raw: data || {}
+  };
+}
+
+async function fetchHoyolabDailyNote(role, cookies) {
+  const roleId = role.game_uid || role.game_role_id || role.role_id;
+  const server = role.region || role.region_name || role.server;
+  if (!roleId || !server) throw new Error("ZZZのUIDまたはサーバー情報を取得できませんでした。");
+  const query = new URLSearchParams({ role_id: String(roleId), server: String(server) });
+  const json = await hoyolabGet(`${hoyolabNoteUrl}?${query}`, cookies);
+  if (json.retcode !== 0) throw new Error(json.message || `daily note retcode ${json.retcode}`);
+  return {
+    role: { nickname: role.nickname || role.name || "", level: role.level || "", region: server, uid: roleId },
+    daily: normalizeHoyolabDailyNote(json.data)
   };
 }
 
@@ -697,6 +754,20 @@ ipcMain.handle("hoyolab-sync", async () => {
       gameBiz: item.game_biz || ""
     }))
   };
+});
+
+ipcMain.handle("hoyolab-daily-status", async () => {
+  const cookies = await hoyolabCookies();
+  const state = await hoyolabLoginState();
+  if (!state.loggedIn) {
+    throw new Error("HoYoLABにログインしてから検知してください。");
+  }
+  const roles = await fetchHoyolabRoles(cookies);
+  const role = zzzRoleFromRoles(roles);
+  if (!role) {
+    throw new Error("HoYoLABアカウントにZZZのゲームロールが見つかりませんでした。");
+  }
+  return fetchHoyolabDailyNote(role, cookies);
 });
 
 ipcMain.handle("choose-stat-image", async () => {

@@ -368,6 +368,7 @@ const el = {
   rankFilters: document.querySelector("#rankFilters"),
   ownershipFilters: document.querySelector("#ownershipFilters"),
   dailyList: document.querySelector("#dailyList"),
+  detectDaily: document.querySelector("#detectDailyBtn"),
   notifyNow: document.querySelector("#notifyNowBtn"),
   notificationToggle: document.querySelector("#notificationToggle"),
   notificationTime: document.querySelector("#notificationTimeInput"),
@@ -425,12 +426,13 @@ function loadDailyState() {
   const key = todayKey();
   const saved = readJsonStorage("dailyState", {});
   if (saved.date !== key) {
-    return { date: key, done: Array(dailyTasks.length).fill(false), lastNotified: "" };
+    return { date: key, done: Array(dailyTasks.length).fill(false), lastNotified: "", hoyolab: null };
   }
   return {
     date: key,
     done: Array.from({ length: dailyTasks.length }, (_, i) => Boolean(saved.done?.[i])),
-    lastNotified: saved.lastNotified || ""
+    lastNotified: saved.lastNotified || "",
+    hoyolab: saved.hoyolab || null
   };
 }
 
@@ -2829,7 +2831,8 @@ function renderDaily() {
   dailyTasks.forEach((task, index) => {
     const row = document.createElement("label");
     row.className = `daily-item ${state.daily.done[index] ? "done" : ""}`;
-    row.innerHTML = `<input type="checkbox" ${state.daily.done[index] ? "checked" : ""} /><span>${task}</span>`;
+    const source = state.daily.hoyolab?.applied?.[index];
+    row.innerHTML = `<input type="checkbox" ${state.daily.done[index] ? "checked" : ""} /><span>${task}${source ? `<em>HoYoLAB: ${escapeHtml(source)}</em>` : ""}</span>`;
     row.querySelector("input").addEventListener("change", (event) => {
       state.daily.done[index] = event.target.checked;
       saveDailyState();
@@ -2839,6 +2842,60 @@ function renderDaily() {
     el.dailyList.appendChild(row);
   });
   updateDailyStatus();
+}
+
+function dailyDetectionSummary(note) {
+  const daily = note?.daily || {};
+  const lines = [];
+  if (daily.energy) lines.push(`活性 ${daily.energy.current}/${daily.energy.max}`);
+  if (daily.vitality) lines.push(`デイリー ${daily.vitality.current}/${daily.vitality.max}`);
+  if (daily.scratch) lines.push(`スクラッチ ${daily.scratch.done ? "済み" : "未"}`);
+  if (daily.shop) lines.push(`店舗 ${daily.shop.state === "finished" ? "完了" : daily.shop.state === "open" ? "販売中" : "未確認"}`);
+  return lines.join(" / ");
+}
+
+function applyDailyDetection(note) {
+  const daily = note?.daily || {};
+  const applied = {};
+  if (daily.energy?.spent) {
+    state.daily.done[0] = true;
+    applied[0] = `活性 ${daily.energy.current}/${daily.energy.max}`;
+  }
+  if (daily.vitality?.done) {
+    state.daily.done[1] = true;
+    applied[1] = `活躍度 ${daily.vitality.current}/${daily.vitality.max}`;
+  }
+  if (daily.scratch?.done || daily.shop?.state === "finished") {
+    state.daily.done[2] = true;
+    applied[2] = `${daily.scratch?.done ? "スクラッチ済み" : ""}${daily.shop?.state === "finished" ? " 店舗完了" : ""}`.trim();
+  }
+  state.daily.hoyolab = {
+    checkedAt: daily.checkedAt || new Date().toISOString(),
+    summary: dailyDetectionSummary(note),
+    applied
+  };
+  saveDailyState();
+  renderDaily();
+  updateDailyStatus();
+  return applied;
+}
+
+async function detectDailyFromHoyolab() {
+  if (!window.zzzApp?.hoyolabDailyStatus) {
+    el.dailyStatus.textContent = "HoYoLAB完了検知に未対応です";
+    return;
+  }
+  el.dailyStatus.textContent = "HoYoLABで日課状態を確認中";
+  try {
+    const note = await window.zzzApp.hoyolabDailyStatus();
+    const applied = applyDailyDetection(note);
+    const count = Object.keys(applied).length;
+    el.dailyStatus.textContent = count
+      ? `HoYoLAB検知: ${count}件反映 / ${state.daily.hoyolab.summary}`
+      : `HoYoLAB検知: 自動反映なし / ${state.daily.hoyolab.summary}`;
+  } catch (error) {
+    el.dailyStatus.textContent = `HoYoLAB検知失敗: ${error.message || error}`;
+  }
 }
 
 function incompleteDailyTasks() {
@@ -3378,6 +3435,7 @@ function bindEvents() {
     renderCharacters();
   });
   el.notifyNow.addEventListener("click", () => notifyIfDailyIncomplete({ force: true }));
+  el.detectDaily?.addEventListener("click", detectDailyFromHoyolab);
   el.notificationToggle.checked = state.settings.notifyDaily;
   if (el.notificationTime) el.notificationTime.value = state.settings.notifyTime || "21:00";
   el.autoUpdateToggle.checked = state.settings.autoUpdate;
