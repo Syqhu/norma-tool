@@ -1,0 +1,34 @@
+{
+  "name": "norma-tool",
+  "version": "0.1.0",
+  "description": "Zenless Zone Zero growth planner for Norma builds and daily planning.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "local.norma.tool",
+    "productName": "norma tool",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "assets/norma-tool-icon.ico"
+    }
+  },
+  "dependencies": {
+    "sharp": "^0.35.2",
+    "tesseract.js": "^7.0.0"
+  }
+}

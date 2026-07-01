@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.env
+.DS_Store
+Thumbs.db
+*.traineddata
+/app.js
+/main.js
+/targetData.js
+/builder-debug.yml
