@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("zzzApp", {
   getAppInfo: () => ipcRenderer.invoke("get-app-info"),
   checkAppUpdate: () => ipcRenderer.invoke("check-app-update"),
   openExternalUrl: (url) => ipcRenderer.invoke("open-external-url", url),
+  saveBackupFile: (payload) => ipcRenderer.invoke("save-backup-file", payload),
+  openBackupFile: () => ipcRenderer.invoke("open-backup-file"),
   chooseStatImage: () => ipcRenderer.invoke("choose-stat-image"),
   extractStatsFromImage: (filePath) => ipcRenderer.invoke("extract-stats-from-image", filePath),
   extractDiscFromImage: (filePath) => ipcRenderer.invoke("extract-disc-from-image", filePath),

@@ -380,6 +380,9 @@ const el = {
   hoyolabSync: document.querySelector("#hoyolabSyncBtn"),
   hoyolabDisconnect: document.querySelector("#hoyolabDisconnectBtn"),
   hoyolabStatus: document.querySelector("#hoyolabStatus"),
+  exportBackup: document.querySelector("#exportBackupBtn"),
+  importBackup: document.querySelector("#importBackupBtn"),
+  backupStatus: document.querySelector("#backupStatus"),
   appInfo: document.querySelector("#appInfo")
 };
 
@@ -2831,6 +2834,70 @@ async function openLatestRelease() {
   }
 }
 
+function setBackupStatus(message) {
+  if (el.backupStatus) el.backupStatus.textContent = message;
+}
+
+function collectBackupStorage() {
+  const storage = {};
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    storage[key] = localStorage.getItem(key);
+  }
+  return storage;
+}
+
+async function exportBackup() {
+  if (!window.zzzApp?.saveBackupFile) return;
+  setBackupStatus("バックアップを作成中です。");
+  try {
+    const info = window.zzzApp.getAppInfo ? await window.zzzApp.getAppInfo() : {};
+    const storage = collectBackupStorage();
+    const saved = await window.zzzApp.saveBackupFile({
+      schema: "norma-tool-backup",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      appVersion: info.version || "",
+      storage
+    });
+    setBackupStatus(saved
+      ? `保存しました: ${saved}`
+      : "バックアップ保存をキャンセルしました。");
+  } catch (error) {
+    setBackupStatus(`バックアップ保存に失敗: ${error.message || error}`);
+  }
+}
+
+async function importBackup() {
+  if (!window.zzzApp?.openBackupFile) return;
+  setBackupStatus("バックアップを選択してください。");
+  try {
+    const opened = await window.zzzApp.openBackupFile();
+    if (!opened) {
+      setBackupStatus("バックアップ復元をキャンセルしました。");
+      return;
+    }
+    const backup = opened.data || {};
+    if (backup.schema !== "norma-tool-backup" || !backup.storage || typeof backup.storage !== "object") {
+      throw new Error("norma toolのバックアップJSONではありません。");
+    }
+    const ok = window.confirm("現在のローカルデータをバックアップ内容で上書きします。復元しますか？");
+    if (!ok) {
+      setBackupStatus("バックアップ復元をキャンセルしました。");
+      return;
+    }
+    localStorage.clear();
+    for (const [key, value] of Object.entries(backup.storage)) {
+      localStorage.setItem(key, String(value ?? ""));
+    }
+    setBackupStatus(`復元しました: ${opened.filePath}`);
+    window.setTimeout(() => window.location.reload(), 700);
+  } catch (error) {
+    setBackupStatus(`バックアップ復元に失敗: ${error.message || error}`);
+  }
+}
+
 function hoyolabCharacterMatch(item) {
   const id = Number(item.id || 0);
   if (id) {
@@ -3155,6 +3222,8 @@ function bindEvents() {
   el.refreshData.addEventListener("click", () => loadCharacters({ force: true }));
   el.checkAppUpdate?.addEventListener("click", () => checkAppUpdate());
   el.openAppRelease?.addEventListener("click", openLatestRelease);
+  el.exportBackup?.addEventListener("click", exportBackup);
+  el.importBackup?.addEventListener("click", importBackup);
   el.hoyolabLogin?.addEventListener("click", loginHoyolab);
   el.hoyolabSync?.addEventListener("click", syncHoyolab);
   el.hoyolabDisconnect?.addEventListener("click", disconnectHoyolab);

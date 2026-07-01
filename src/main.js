@@ -1,4 +1,5 @@
 ﻿const { app, BrowserWindow, ipcMain, Notification, dialog, session } = require("electron");
+const fs = require("fs/promises");
 const path = require("path");
 const { shell } = require("electron");
 const sharp = require("sharp");
@@ -602,6 +603,32 @@ ipcMain.handle("open-external-url", async (_event, url) => {
   }
   await shell.openExternal(target);
   return true;
+});
+
+ipcMain.handle("save-backup-file", async (_event, payload) => {
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "バックアップ保存",
+    defaultPath: `norma-tool-backup-${stamp}.json`,
+    filters: [{ name: "JSON", extensions: ["json"] }]
+  });
+  if (result.canceled || !result.filePath) return null;
+  await fs.writeFile(result.filePath, JSON.stringify(payload || {}, null, 2), "utf8");
+  return result.filePath;
+});
+
+ipcMain.handle("open-backup-file", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "バックアップ復元",
+    properties: ["openFile"],
+    filters: [{ name: "JSON", extensions: ["json"] }]
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const raw = await fs.readFile(result.filePaths[0], "utf8");
+  return {
+    filePath: result.filePaths[0],
+    data: JSON.parse(raw)
+  };
 });
 
 ipcMain.handle("hoyolab-login", async () => {
