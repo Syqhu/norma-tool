@@ -347,7 +347,8 @@ const state = {
   warehouse: {
     search: "",
     set: "",
-    slot: ""
+    slot: "",
+    sort: "score"
   },
   updateInfo: null
 };
@@ -371,6 +372,7 @@ const el = {
   notificationToggle: document.querySelector("#notificationToggle"),
   autoUpdateToggle: document.querySelector("#autoUpdateToggle"),
   appUpdateToggle: document.querySelector("#appUpdateToggle"),
+  autoBackupToggle: document.querySelector("#autoBackupToggle"),
   refreshData: document.querySelector("#refreshDataBtn"),
   appUpdateStatus: document.querySelector("#appUpdateStatus"),
   checkAppUpdate: document.querySelector("#checkAppUpdateBtn"),
@@ -408,7 +410,8 @@ function loadSettings() {
   return {
     notifyDaily: saved.notifyDaily ?? true,
     autoUpdate: saved.autoUpdate ?? true,
-    appUpdate: saved.appUpdate ?? true
+    appUpdate: saved.appUpdate ?? true,
+    autoBackup: saved.autoBackup ?? true
   };
 }
 
@@ -450,6 +453,16 @@ function loadDiscWarehouse() {
 
 function saveDiscWarehouse(items) {
   localStorage.setItem("discWarehouse", JSON.stringify(items.slice(0, 300)));
+}
+
+function warehouseDiscToComparison(entry) {
+  const slot = Number(entry.slot || 1);
+  return {
+    slot,
+    set: normalizeDiscSetName(entry.set || ""),
+    main: fixedDiscMainStats[slot] || normalizeDiscMainName(entry.main, slot),
+    substats: Array.from({ length: 4 }, (_, index) => normalizeSubstat(entry.substats?.[index]))
+  };
 }
 
 function discWarehouseEntry(character, disc, source = "手動") {
@@ -1692,6 +1705,7 @@ function warehouseScoreForCharacter(entry, character) {
 
 function filteredWarehouseItems() {
   const query = state.warehouse.search.trim().toLowerCase();
+  const character = state.characters.find((item) => item.id === state.selectedId) || state.characters[0] || null;
   return loadDiscWarehouse().filter((item) => {
     if (state.warehouse.slot && String(item.slot) !== String(state.warehouse.slot)) return false;
     if (state.warehouse.set && normalizeDiscSetName(item.set) !== normalizeDiscSetName(state.warehouse.set)) return false;
@@ -1700,6 +1714,13 @@ function filteredWarehouseItems() {
       .join(" ")
       .toLowerCase()
       .includes(query);
+  }).sort((a, b) => {
+    if (state.warehouse.sort === "new") return new Date(b.savedAt || 0) - new Date(a.savedAt || 0);
+    if (state.warehouse.sort === "slot") return Number(a.slot || 0) - Number(b.slot || 0);
+    if (state.warehouse.sort === "set") return String(a.set || "").localeCompare(String(b.set || ""), "ja");
+    const left = character ? warehouseScoreForCharacter(a, character) : 0;
+    const right = character ? warehouseScoreForCharacter(b, character) : 0;
+    return right - left;
   });
 }
 
@@ -1710,6 +1731,12 @@ function renderWarehousePanel() {
   const character = state.characters.find((item) => item.id === state.selectedId) || state.characters[0] || null;
   const setOptions = discSetOptions.map((option) => `<option value="${escapeHtml(option)}" ${state.warehouse.set === option ? "selected" : ""}>${escapeHtml(option || "セットすべて")}</option>`).join("");
   const slotOptions = ["", ...discSlots].map((slot) => `<option value="${slot}" ${String(state.warehouse.slot) === String(slot) ? "selected" : ""}>${slot || "番号すべて"}</option>`).join("");
+  const sortOptions = [
+    ["score", "評価順"],
+    ["new", "新着順"],
+    ["slot", "番号順"],
+    ["set", "セット順"]
+  ].map(([value, label]) => `<option value="${value}" ${state.warehouse.sort === value ? "selected" : ""}>${label}</option>`).join("");
   el.warehousePanel.innerHTML = `
     <div class="panel-heading compact">
       <div>
@@ -1722,6 +1749,7 @@ function renderWarehousePanel() {
       <label class="select-line"><span>検索</span><input id="warehouseSearch" type="search" value="${escapeHtml(state.warehouse.search)}" placeholder="セット、メイン、サブ、保存元..." /></label>
       <label class="select-line"><span>番号</span><select id="warehouseSlot">${slotOptions}</select></label>
       <label class="select-line"><span>セット</span><select id="warehouseSet">${setOptions}</select></label>
+      <label class="select-line"><span>並び</span><select id="warehouseSort">${sortOptions}</select></label>
     </div>
     <div class="summary-grid">
       <div class="summary-card"><span>登録枚数</span><strong>${all.length}</strong><em>最大300件</em></div>
@@ -1741,7 +1769,10 @@ function renderWarehousePanel() {
             <p>${escapeHtml(item.set || "セット未入力")}</p>
             <em>${escapeHtml(discSubstatText(item) || "サブステ未入力")}</em>
             <small>保存元: ${escapeHtml(item.characterName || item.source || "倉庫")} / 合うキャラ: ${best.map((row) => `${escapeHtml(row.character.name)} ${row.score}`).join(" / ") || "未判定"}</small>
-            <button class="pill-button danger" data-warehouse-delete="${escapeHtml(item.id)}">削除</button>
+            <div class="button-row">
+              <button class="pill-button" data-warehouse-candidate="${escapeHtml(item.id)}">比較候補へ</button>
+              <button class="pill-button danger" data-warehouse-delete="${escapeHtml(item.id)}">削除</button>
+            </div>
           </article>
         `;
       }).join("") : `<div class="empty-detail">条件に合うディスクがありません。</div>`}
@@ -1758,6 +1789,24 @@ function renderWarehousePanel() {
   el.warehousePanel.querySelector("#warehouseSet")?.addEventListener("change", (event) => {
     state.warehouse.set = event.target.value;
     renderWarehousePanel();
+  });
+  el.warehousePanel.querySelector("#warehouseSort")?.addEventListener("change", (event) => {
+    state.warehouse.sort = event.target.value;
+    renderWarehousePanel();
+  });
+  el.warehousePanel.querySelectorAll("[data-warehouse-candidate]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = state.characters.find((item) => item.id === state.selectedId) || character;
+      const entry = loadDiscWarehouse().find((item) => item.id === button.dataset.warehouseCandidate);
+      if (!target || !entry) return;
+      const data = loadComparisonState(target);
+      const disc = warehouseDiscToComparison(entry);
+      data.discCandidates[disc.slot - 1] = disc;
+      saveComparisonState(target, data);
+      state.selectedId = target.id;
+      state.discImportStatus = `${entry.slot}番を${target.name}の比較候補に反映しました。`;
+      renderWarehousePanel();
+    });
   });
   el.warehousePanel.querySelectorAll("[data-warehouse-delete]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2158,6 +2207,13 @@ function teamSynergy(items) {
     penalties.push(8);
     notes.push("異常2+撃破は支援不足になりがちです。撃破枠を支援/防護に替える候補も比較してください。");
   }
+  if (hasStun && !roles.includes("強攻") && !roles.includes("命破") && !hasAnomalyPair) {
+    penalties.push(6);
+    notes.push("撃破枠の火力窓を活かす主力が弱めです。強攻/命破、または異常2枚の軸を検討してください。");
+  }
+  if (roles.includes("防護") && roles.includes("支援") && dps.length === 1 && !hasStun && !hasAnomalyPair) {
+    notes.push("支援+防護の安定型です。火力不足を感じる場合は防護枠を撃破/サブ火力に替えて比較してください。");
+  }
   if (items.length < 3) {
     penalties.push((3 - items.length) * 15);
     notes.push("3枠すべて選ぶと編成評価が安定します。");
@@ -2312,6 +2368,7 @@ function renderTeamSimulator() {
       <div class="summary-card"><span>主軸</span><strong>${escapeHtml(synergy.anchor?.name || "未選択")}</strong><em>${escapeHtml(synergy.anchor ? `${synergy.anchor.role} / ${synergy.anchor.element}` : "火力役を選択")}</em></div>
       <div class="summary-card"><span>選択中</span><strong>${selected.length}/3</strong><em>${selected.map((item) => escapeHtml(item.name)).join(" / ") || "未選択"}</em></div>
       <div class="summary-card"><span>追加能力</span><strong>${synergy.ability.filter((item) => item.active).length}/${selected.length || 0}</strong><em>発動中</em></div>
+      <div class="summary-card"><span>実戦目安</span><strong>${synergy.score >= 80 ? "採用級" : synergy.score >= 60 ? "調整可" : "要調整"}</strong><em>相性/役割/条件</em></div>
     </div>
     <div class="team-synergy-grid">
       ${synergy.ability.length ? synergy.ability.map((item) => `
@@ -2558,9 +2615,22 @@ async function saveBuildCard(character) {
     ...activeProfile(baseProfile, data, character),
     scoreWeights: discWeightProfile(character, baseProfile, data).weights
   };
+  const comparisons = compareTargets(profile, data);
+  const completion = buildCompletion(character, profile, data);
+  const shortages = comparisons.filter((item) => item.status === "short").slice(0, 4);
   const payload = {
     character: character.name,
-    note: `${profile.variant} / ${profile.status}`,
+    note: `${profile.variant} / ${profile.status} / 完成度 ${completion.total}%`,
+    summary: [
+      { label: "完成度", value: `${completion.total}%` },
+      { label: "ステータス", value: `${completion.statScore}%` },
+      { label: "ディスク平均", value: `${completion.discScoreAvg}` },
+      { label: "メイン一致", value: `${completion.mainScore}%` }
+    ],
+    shortages: shortages.map((item) => ({
+      label: statLabel(item.key),
+      value: `${statValueText(item.current, item.key)} / 目標 ${targetValueText(item)}`
+    })),
     stats: targetData.stats
       .filter((stat) => numeric(data.stats[stat.key]) !== null)
       .map((stat) => ({ label: stat.label, value: statValueText(data.stats[stat.key], stat.key) })),
@@ -2804,8 +2874,10 @@ async function checkAppUpdate({ silent = false } = {}) {
       el.openAppRelease.dataset.releaseUrl = info.releaseUrl || "";
     }
     const releaseDate = formatReleaseDate(info.publishedAt);
+    const assets = (info.assets || []).map((asset) => asset.name).filter(Boolean);
+    const assetText = assets.length ? ` / 配布: ${assets.slice(0, 2).join("・")}` : "";
     if (info.hasUpdate) {
-      setAppUpdateStatus(`新しい版があります: ${info.tagName || info.latestVersion}${releaseDate ? ` / ${releaseDate}` : ""}`);
+      setAppUpdateStatus(`新しい版があります: ${info.tagName || info.latestVersion}${releaseDate ? ` / ${releaseDate}` : ""}${assetText}`);
       const notifyKey = `appUpdateNotified:${info.tagName || info.latestVersion}`;
       if (!silent || localStorage.getItem(notifyKey) !== "1") {
         await window.zzzApp.notifyDailyIncomplete({
@@ -2815,7 +2887,7 @@ async function checkAppUpdate({ silent = false } = {}) {
         localStorage.setItem(notifyKey, "1");
       }
     } else {
-      setAppUpdateStatus(`最新版です: App ${info.currentVersion}${info.tagName ? ` / GitHub ${info.tagName}` : ""}`);
+      setAppUpdateStatus(`最新版です: App ${info.currentVersion}${info.tagName ? ` / GitHub ${info.tagName}` : ""}${assetText}`);
     }
     return info;
   } catch (error) {
@@ -2848,19 +2920,44 @@ function collectBackupStorage() {
   return storage;
 }
 
+async function buildBackupPayload() {
+  const info = window.zzzApp.getAppInfo ? await window.zzzApp.getAppInfo() : {};
+  return {
+    schema: "norma-tool-backup",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    appVersion: info.version || "",
+    storage: collectBackupStorage()
+  };
+}
+
+async function createAutoBackup() {
+  if (!state.settings.autoBackup) return;
+  const today = todayKey();
+  if (localStorage.getItem("autoBackup:lastDate") === today) {
+    setBackupStatus("今日の自動バックアップは作成済みです。");
+    return;
+  }
+  try {
+    const payload = await buildBackupPayload();
+    const backups = readJsonStorage("autoBackups", []);
+    const next = [
+      { date: new Date().toISOString(), payload },
+      ...backups
+    ].slice(0, 5);
+    localStorage.setItem("autoBackups", JSON.stringify(next));
+    localStorage.setItem("autoBackup:lastDate", today);
+    setBackupStatus(`自動バックアップ作成済み: ${new Date().toLocaleString("ja-JP")}`);
+  } catch (error) {
+    setBackupStatus(`自動バックアップに失敗: ${error.message || error}`);
+  }
+}
+
 async function exportBackup() {
   if (!window.zzzApp?.saveBackupFile) return;
   setBackupStatus("バックアップを作成中です。");
   try {
-    const info = window.zzzApp.getAppInfo ? await window.zzzApp.getAppInfo() : {};
-    const storage = collectBackupStorage();
-    const saved = await window.zzzApp.saveBackupFile({
-      schema: "norma-tool-backup",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      appVersion: info.version || "",
-      storage
-    });
+    const saved = await window.zzzApp.saveBackupFile(await buildBackupPayload());
     setBackupStatus(saved
       ? `保存しました: ${saved}`
       : "バックアップ保存をキャンセルしました。");
@@ -2982,6 +3079,29 @@ function applyHoyolabSync(result) {
   return { matched, statCount, discCount, unmatched, diff };
 }
 
+function previewHoyolabSync(result) {
+  let matched = 0;
+  let newOwned = 0;
+  let statCount = 0;
+  let discCount = 0;
+  const names = [];
+  const unmatched = [];
+  for (const item of result.characters || []) {
+    const character = hoyolabCharacterMatch(item);
+    if (!character) {
+      unmatched.push(item.name || item.id || "unknown");
+      continue;
+    }
+    matched += 1;
+    names.push(character.name);
+    const data = loadComparisonState(character);
+    if (!data.ownership.owned) newOwned += 1;
+    statCount += Object.entries(item.stats || {}).filter(([key, value]) => statByKey[key] && value !== "").length;
+    discCount += (item.discs || []).filter((disc) => discSlots.includes(Number(disc.slot))).length;
+  }
+  return { matched, newOwned, statCount, discCount, names, unmatched };
+}
+
 function setHoyolabStatus(message) {
   if (el.hoyolabStatus) el.hoyolabStatus.textContent = message;
 }
@@ -3014,8 +3134,23 @@ async function syncHoyolab() {
   setHoyolabStatus("HoYoLABから所持キャラ・ステータス・ディスクを同期中です。");
   try {
     const result = await window.zzzApp.hoyolabSync();
-    const applied = applyHoyolabSync(result);
+    const preview = previewHoyolabSync(result);
     const account = result.role?.nickname ? `${result.role.nickname} / UID ${result.role.uid}` : `UID ${result.role?.uid || "不明"}`;
+    const ok = window.confirm([
+      `${account} の同期内容を確認してください。`,
+      `一致キャラ: ${preview.matched}名`,
+      `新規所持: ${preview.newOwned}名`,
+      `ステータス: ${preview.statCount}項目`,
+      `ディスク: ${preview.discCount}枚`,
+      preview.unmatched.length ? `未一致: ${preview.unmatched.slice(0, 6).join(" / ")}` : "",
+      "",
+      "この内容をローカルデータへ反映しますか？"
+    ].filter(Boolean).join("\n"));
+    if (!ok) {
+      setHoyolabStatus(`同期レビューでキャンセルしました。取得: ${preview.matched}名 / ディスク${preview.discCount}枚`);
+      return;
+    }
+    const applied = applyHoyolabSync(result);
     setHoyolabStatus(`${account}: ${applied.matched}名同期、ステータス${applied.statCount}項目、ディスク${applied.discCount}枚を反映しました。`);
   } catch (error) {
     setHoyolabStatus(`同期に失敗: ${error.message || error}`);
@@ -3152,7 +3287,8 @@ function setupChecklist() {
     { label: "キャラデータ更新", done: state.characters.length > 0, note: `${state.characters.length}名` },
     { label: "HoYoLAB同期", done: ownedCount > 0, note: ownedCount ? `所持 ${ownedCount}名` : "未同期" },
     { label: "通知設定", done: state.settings.notifyDaily, note: state.settings.notifyDaily ? "ON" : "OFF" },
-    { label: "アップデート確認", done: state.settings.appUpdate, note: state.settings.appUpdate ? "ON" : "OFF" }
+    { label: "アップデート確認", done: state.settings.appUpdate, note: state.settings.appUpdate ? "ON" : "OFF" },
+    { label: "自動バックアップ", done: state.settings.autoBackup, note: state.settings.autoBackup ? "ON" : "OFF" }
   ];
 }
 
@@ -3205,6 +3341,7 @@ function bindEvents() {
   el.notificationToggle.checked = state.settings.notifyDaily;
   el.autoUpdateToggle.checked = state.settings.autoUpdate;
   el.appUpdateToggle.checked = state.settings.appUpdate;
+  if (el.autoBackupToggle) el.autoBackupToggle.checked = state.settings.autoBackup;
   el.notificationToggle.addEventListener("change", () => {
     state.settings.notifyDaily = el.notificationToggle.checked;
     saveSettings();
@@ -3216,6 +3353,11 @@ function bindEvents() {
   });
   el.appUpdateToggle.addEventListener("change", () => {
     state.settings.appUpdate = el.appUpdateToggle.checked;
+    saveSettings();
+    renderSetupPanel();
+  });
+  el.autoBackupToggle?.addEventListener("change", () => {
+    state.settings.autoBackup = el.autoBackupToggle.checked;
     saveSettings();
     renderSetupPanel();
   });
@@ -3254,6 +3396,7 @@ async function init() {
   if (state.settings.appUpdate) {
     setTimeout(() => checkAppUpdate({ silent: true }), 1800);
   }
+  setTimeout(() => createAutoBackup(), 900);
   refreshHoyolabStatus();
   finishSplash();
 }

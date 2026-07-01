@@ -523,14 +523,24 @@ async function saveBuildCard(payload) {
   if (result.canceled || !result.filePath) return null;
   const stats = payload.stats || [];
   const discs = payload.discs || [];
+  const summary = payload.summary || [];
+  const shortages = payload.shortages || [];
+  const summaryRows = summary.slice(0, 4).map((item, index) => {
+    const x = 56 + index * 220;
+    return `<rect x="${x}" y="180" width="196" height="74" rx="14" fill="#1b1727" stroke="#2ad5ff" stroke-opacity=".35"/><text x="${x + 18}" y="210" class="label">${escapeSvg(item.label)}</text><text x="${x + 174}" y="240" class="value">${escapeSvg(item.value)}</text>`;
+  }).join("");
   const statRows = stats.slice(0, 8).map((item, index) => {
     const x = 56 + (index % 2) * 420;
-    const y = 210 + Math.floor(index / 2) * 58;
+    const y = 312 + Math.floor(index / 2) * 48;
     return `<text x="${x}" y="${y}" class="label">${escapeSvg(item.label)}</text><text x="${x + 250}" y="${y}" class="value">${escapeSvg(item.value)}</text>`;
   }).join("");
+  const shortageRows = shortages.slice(0, 4).map((item, index) => {
+    const y = 530 + index * 34;
+    return `<text x="58" y="${y}" class="label">${escapeSvg(item.label)}</text><text x="260" y="${y}" class="disc">${escapeSvg(item.value)}</text>`;
+  }).join("");
   const discRows = discs.slice(0, 6).map((item, index) => {
-    const y = 500 + index * 44;
-    return `<text x="58" y="${y}" class="label">${escapeSvg(item.slot)}番</text><text x="140" y="${y}" class="disc">${escapeSvg(item.text)}</text><text x="795" y="${y}" class="value">${escapeSvg(item.score)}</text>`;
+    const y = 532 + index * 39;
+    return `<text x="500" y="${y}" class="label">${escapeSvg(item.slot)}番</text><text x="568" y="${y}" class="disc">${escapeSvg(item.text)}</text><text x="900" y="${y}" class="value">${escapeSvg(item.score)}</text>`;
   }).join("");
   const svg = `
     <svg width="960" height="820" xmlns="http://www.w3.org/2000/svg">
@@ -541,9 +551,12 @@ async function saveBuildCard(payload) {
       <rect x="28" y="28" width="904" height="764" rx="24" fill="#11101a" stroke="#b57cff" stroke-opacity=".45"/>
       <text x="56" y="92" class="eyebrow">norma tool build card</text>
       <text x="56" y="148" class="title">${escapeSvg(payload.character)}</text>
-      <text x="58" y="180" class="section">Current Stats</text>
+      ${summaryRows}
+      <text x="58" y="286" class="section">Current Stats</text>
       ${statRows}
-      <text x="58" y="454" class="section">Disc Score</text>
+      <text x="58" y="490" class="section">Shortage</text>
+      ${shortageRows || `<text x="58" y="530" class="disc">大きな不足なし</text>`}
+      <text x="500" y="490" class="section">Disc Score</text>
       ${discRows}
       <text x="56" y="760" class="note">${escapeSvg(payload.note || "")}</text>
       <style>
