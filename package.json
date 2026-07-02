@@ -1,6 +1,6 @@
 {
   "name": "norma-tool",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Zenless Zone Zero growth planner for Norma builds and daily planning.",
   "main": "src/main.js",
   "scripts": {
